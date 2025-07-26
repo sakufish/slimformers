@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModelForMaskedLM
 from peft import TaskType
 from slimformers import Pruner
@@ -12,45 +12,55 @@ model_id = "gpt2"
 model = AutoModelForCausalLM.from_pretrained(model_id)
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-# Inputs
-text = "The quick brown fox:"
-inputs = tokenizer(text, return_tensors="pt")
+# GPT-2 doesn't have offical padding token
+tokenizer.pad_token = tokenizer.eos_token
+
+# Sample corpus
+texts = [
+    "The quick brown fox jumps over the lazy dog.",
+    "Artificial intelligence is transforming the world.",
+    "LoRA and pruning improve model efficiency.",
+    "Transformers are powerful neural networks."
+]
+
+encodings = tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+
+# Wrap tokenized data in a Dataset for DataLoader
+class TextDataset(Dataset):
+    def __init__(self, encodings):
+        self.encodings = encodings
+    def __len__(self):
+        return self.encodings["input_ids"].size(0)
+    def __getitem__(self, idx):
+        return {k: v[idx] for k, v in self.encodings.items()}
+
+dataloader = DataLoader(TextDataset(encodings), batch_size=2, shuffle=False)
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters())
 
 # Prune MLP layers
 pruner = Pruner(model)
-pruner.prune_all_mlp_layers(inputs, sparsity=0.4)
+pruner.prune_all_mlp_layers(dataloader=dataloader, sparsity=0.4)
 
 print("After pruning:")
 print(f"Pruned model size: {count_parameters(model):,} params")
 
 # Forward pass and generation test
 model.eval()
+sample_inputs = tokenizer("The quick brown fox", return_tensors="pt").to("cpu")
 with torch.no_grad():
-    out = model(**inputs)
+    out = model(**sample_inputs)
 print("Forward pass OK, logits.shape =", out.logits.shape)
 
 gen_ids = model.generate(
-    **inputs,
+    **sample_inputs,
     max_new_tokens=20,
     do_sample=True,
     top_k=50,
     top_p=0.95,
 )
 print("Generated (pruned) text:\n", tokenizer.decode(gen_ids[0], skip_special_tokens=True))
-
-# Create a simple dataloader for LoRA
-class TextDataset(torch.utils.data.Dataset):
-    def __init__(self, encodings):
-        self.encodings = encodings
-    def __len__(self):
-        return 1
-    def __getitem__(self, idx):
-        return {k: v.squeeze(0) for k, v in self.encodings.items()}
-
-dataloader = DataLoader(TextDataset(inputs), batch_size=1)
 
 # Apply LoRA 
 print("\nStarting LoRA fine-tuning...")
@@ -72,11 +82,11 @@ print(f"Fine-tuned model size: {count_parameters(model):,} params")
 # Test generation
 model.eval()
 with torch.no_grad():
-    out_ft = model(**inputs)
+    out_ft = model(**sample_inputs)
 print("Forward pass after LoRA, logits.shape =", out_ft.logits.shape)
 
 gen_ids_ft = model.generate(
-    **inputs,
+    **sample_inputs,
     max_new_tokens=50,
     do_sample=True,
     top_k=50,

@@ -130,11 +130,15 @@ class Pruner:
         else:
             raise TypeError(f"Can't rebuild module of type {type(layer)}")
 
-    def prune_all_mlp_layers(self, inputs: dict, sparsity: float = 0.3):
+    def prune_all_mlp_layers(self, dataloader: torch.utils.data.DataLoader, sparsity: float = 0.3, max_batches: int = 10):
         """
-        Discover MLP blocks, collect activations, then rebuild each block
-        by slicing out the pruned neurons (dimension slicing).
-        Works for both Conv1D-based and nn.Linear-based FFNs.
+        Prune MLP/FFN layers using activations collected from multiple batches in a DataLoader.
+        Automatically averages activations across batches before applying the pruning strategy.
+
+        Args:
+            dataloader (torch.utils.data.DataLoader): Yields dict[str, torch.Tensor] batches
+            sparsity (float): Fraction of neurons to prune (0.0 keeps all, 1.0 prunes all)
+            max_batches (int): Max number of batches to use for computing average activations
         """
         if self._has_pruned:
             console.print("[yellow]Pruner has already run once — skipping second pass[/yellow]")
@@ -151,14 +155,31 @@ class Pruner:
             console.print(f"[bold white]Block {i}[/bold white] – Type: {blk['type']}")
 
             hook_key = blk["gate_name"] if blk["type"] == "gated" else blk["fc_name"]
+            
+            self.activations = {}
             handle = self._hook_activations(hook_key)
 
-            with torch.no_grad():
-                _ = self.model(**{k: v.to(device) for k, v in inputs.items()})
+            total_acts = None
+            num_batches = 0
+
+            for batch in dataloader:
+                if num_batches >= max_batches:
+                    break
+                with torch.no_grad():
+                    _ = self.model(**{k: v.to(device) for k, v in batch.items()})
+                act = self.activations.pop(hook_key, None)
+                if act is None:
+                    continue
+                total_acts = act if total_acts is None else total_acts + act
+                num_batches += 1
+
             handle.remove()
 
-            acts = self.activations.pop(hook_key)
-            keep_idx, orig = self.pruning_strategy(acts, sparsity)
+            if num_batches == 0:
+                raise RuntimeError(f"No activations captured for block {i} ({hook_key})")
+
+            avg_acts = total_acts / num_batches
+            keep_idx, orig = self.pruning_strategy(avg_acts, sparsity)
 
             if blk["type"] == "gated":
                 new_gate = self._rebuild(blk["gate"],   keep_out=keep_idx)
