@@ -4,6 +4,8 @@ from transformers.modeling_utils import Conv1D
 from rich.console import Console
 from rich.panel import Panel
 from .discovery import DISCOVERY_REGISTRY, default_discover
+import psutil
+import os
 
 console = Console()
 
@@ -17,6 +19,14 @@ class Pruner:
         self.activations = {}
         self.pruning_strategy = pruning_strategy or self._compute_topk_neurons
         self.initial_params_num = sum(p.numel() for p in model.parameters())
+        
+        self._init_cpu_mem = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        if torch.cuda.is_available():
+            device = next(model.parameters()).device
+            torch.cuda.reset_peak_memory_stats(device)
+            self._init_gpu_mem = torch.cuda.memory_allocated(device) / 1024**2
+        else:
+            self._init_gpu_mem = None
         
         console.rule("[bold cyan]Pruner Initialized")
         console.print(
@@ -212,12 +222,37 @@ class Pruner:
         saved = self.initial_params_num - current_params
         percent = 100 * saved / self.initial_params_num
 
+        proc = psutil.Process(os.getpid())
+        final_cpu = proc.memory_info().rss / 1024**2
+        cpu_diff = final_cpu - self._init_cpu_mem
+
+        if torch.cuda.is_available():
+            device = next(self.model.parameters()).device
+            final_gpu = torch.cuda.memory_allocated(device) / 1024**2
+            peak_gpu  = torch.cuda.max_memory_allocated(device) / 1024**2
+            gpu_diff = final_gpu - self._init_gpu_mem
+            gpu_line = (
+                f"[bold]GPU Memory (Before --> After):[/bold] "
+                f"{self._init_gpu_mem:.2f} MB --> {final_gpu:.2f} MB "
+                f"([bold green]{gpu_diff:+.2f} MB[/bold green])\n"
+                f"[bold]GPU Memory (Peak):[/bold] {peak_gpu:.2f} MB"
+            )
+        else:
+            gpu_line = "[dim]GPU not available — skipped[/dim]"
+
+        cpu_line = (
+            f"[bold]CPU Memory (Before --> After):[/bold] "
+            f"{self._init_cpu_mem:.2f} MB --> {final_cpu:.2f} MB "
+            f"([bold green]{cpu_diff:+.2f} MB[/bold green])"
+        )
+
         console.rule("[bold magenta]Pruning Summary")
         console.print(
             Panel.fit(
                 f"[bold]Original Parameters:[/bold] {self.initial_params_num:,}\n"
                 f"[bold]Pruned Parameters:[/bold] {current_params:,}\n"
-                f"[bold green]Total Reduction:[/bold green] {saved:,} ({percent:.2f}%)",
+                f"[bold green]Total Reduction:[/bold green] {saved:,} ({percent:.2f}%)\n\n"
+                f"{gpu_line}\n{cpu_line}",
                 title="[bold]Compression Results[/bold]",
                 border_style="magenta"
             )
