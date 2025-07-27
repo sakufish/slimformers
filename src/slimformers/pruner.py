@@ -16,7 +16,7 @@ class Pruner:
         self.model = model
         self.activations = {}
         self.pruning_strategy = pruning_strategy or self._compute_topk_neurons
-        self.intial_params_num = sum(p.numel() for p in model.parameters())
+        self.initial_params_num = sum(p.numel() for p in model.parameters())
         
         console.rule("[bold cyan]Pruner Initialized")
         console.print(
