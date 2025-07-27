@@ -26,8 +26,8 @@ def discover_bert_ffns(model):
     for i, layer in enumerate(core.encoder.layer):
         blocks.append({
             "type": "ffn",
-            "fc_name":   f"encoder.layer.{i}.intermediate.dense",
-            "proj_name": f"encoder.layer.{i}.output.dense",
+            "fc_name":   f"bert.encoder.layer.{i}.intermediate.dense",
+            "proj_name": f"bert.encoder.layer.{i}.output.dense",
             "fc":        layer.intermediate.dense,
             "proj":      layer.output.dense,
         })
