@@ -94,10 +94,5 @@ gen_ids_ft = model.generate(
 )
 print("Generated (LoRA-finetuned) text:\n", tokenizer.decode(gen_ids_ft[0], skip_special_tokens=True))
 
-# Print stats
-original_model = AutoModelForCausalLM.from_pretrained(model_id)
-orig_params = count_parameters(original_model)
-pruned_params = count_parameters(model)
-print(f"\nOriginal size: {orig_params:,} params")
-print(f"Pruned+LoRA size: {pruned_params:,} params")
-print(f"Reduction: {orig_params - pruned_params:,} params ({100 * (orig_params - pruned_params) / orig_params:.2f}%)")
+# Stats
+pruner.report()

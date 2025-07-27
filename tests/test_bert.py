@@ -86,9 +86,4 @@ predicted_token_ft = tokenizer.decode(pred_token_id_ft)
 print("Predicted token after LoRA:", predicted_token_ft)
 
 # Stats
-original_model = AutoModelForMaskedLM.from_pretrained(model_id)
-orig_params = count_parameters(original_model)
-pruned_params = count_parameters(model)
-print(f"\nOriginal size: {orig_params:,} params")
-print(f"Pruned+LoRA size: {pruned_params:,} params")
-print(f"Reduction: {orig_params - pruned_params:,} params ({100 * (orig_params - pruned_params) / orig_params:.2f}%)")
+pruner.report()
