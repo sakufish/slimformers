@@ -203,3 +203,22 @@ class Pruner:
 
         console.rule("[bold green]Pruning Complete")    
         self._has_pruned = True
+
+    def report(self):
+        """
+        Print the parameter savings after pruning.
+        """
+        current_params = sum(p.numel() for p in self.model.parameters())
+        saved = self.initial_params_num - current_params
+        percent = 100 * saved / self.initial_params_num
+
+        console.rule("[bold magenta]Pruning Summary")
+        console.print(
+            Panel.fit(
+                f"[bold]Original Parameters:[/bold] {self.initial_params_num:,}\n"
+                f"[bold]Pruned Parameters:[/bold] {current_params:,}\n"
+                f"[bold green]Total Reduction:[/bold green] {saved:,} ({percent:.2f}%)",
+                title="[bold]Compression Results[/bold]",
+                border_style="magenta"
+            )
+        )
