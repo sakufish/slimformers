@@ -25,17 +25,7 @@ keywords = [
   "LLM",
   "pruning",
   "LoRA",
-  "PyTorch",
-  "language model compression",
-  "activation sparsity",
-  "deep learning",
-  "neural network optimization",
-  "slim models",
-  "BERT",
-  "GPT-2",
-  "LLaMA",
-  "pruning library",
-  "low-rank adaptation"
+  "model efficiency"
 ]
 
 [tool.setuptools.packages.find]
