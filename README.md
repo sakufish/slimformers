@@ -69,3 +69,18 @@ def custom_neuron_selection(activations, sparsity):
 # Use custom strategy
 pruner = Pruner(model, pruning_strategy=custom_neuron_selection)
 ```
+## Pruning Report
+
+After pruning, ```pruner.report()``` displays a summary of the compression results. This includes:
+- Original and pruned parameters counts
+- Percentage reduction model size
+- CPU and GPU memory usage before and after pruning
+- Peak GPU memory usage (if CUDA enabled)
+
+### Example 
+
+Pruning was run on ```deepseek-ai/deepseek-coder-1.3b-base``` with 40% sparsity using a Lenovo ThinkPad T490 (Intel i5-8365U CPU, no GPU!): 
+- Original Parameters: ```1,346,471,936```
+- Pruned Parameters: ```1,024,855,424```
+- Total Reduction: ```321,616,512 (23.89%)```
+- CPU Memory: ```(Before --> After): 5398.57 MB --> 4253.34 MB (–1145.23 MB)```
