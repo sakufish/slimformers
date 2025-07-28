@@ -50,7 +50,7 @@ fine_tuned_model = lora_finetune(
     device="cuda",
     r=8,
     alpha=16,
-    task_type=TaskType.CAUSAL_LM
+    task_type=TaskType.TOKEN_CLS
 )
 ```
 ## Custom Prune Strategy
