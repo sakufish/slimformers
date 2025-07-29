@@ -39,6 +39,7 @@ def count_parameters(model):
 
 # Prune MLP layers
 pruner = Pruner(model)
+pruner.prune_attention_heads(dataloader=dataloader, sparsity=0.4)
 pruner.prune_all_mlp_layers(dataloader=dataloader, sparsity=0.4)
 
 print("After pruning:")
