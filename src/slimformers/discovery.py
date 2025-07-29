@@ -123,3 +123,94 @@ def default_discover(model):
     Default discovery entry point when no specific handler exists.
     """
     return discover_ffns_model_agnostic(model)
+
+def discover_gpt2_attention(model):
+    blocks = []
+    for i, block in enumerate(model.transformer.h):
+        attn = block.attn
+        blocks.append({
+            "type": "packed",
+            "prefix": f"transformer.h.{i}.attn",
+            "qkv_name": f"transformer.h.{i}.attn.c_attn",
+            "out_name": f"transformer.h.{i}.attn.c_proj",
+            "qkv": attn.c_attn,
+            "out": attn.c_proj,
+            "num_heads": attn.num_heads,
+        })
+    return blocks
+
+def discover_bert_attention(model):
+    """
+    Locate separate‐QKV attention blocks in BERT models.
+    """
+    blocks = []
+    core = getattr(model, "bert", model)
+
+    for i, layer in enumerate(core.encoder.layer):
+        sa = layer.attention.self
+        out_proj = layer.attention.output.dense
+
+        blocks.append({
+            "type": "separate",
+            "prefix":   f"bert.encoder.layer.{i}.attention.self",
+            "q_name":   f"bert.encoder.layer.{i}.attention.self.query",
+            "k_name":   f"bert.encoder.layer.{i}.attention.self.key",
+            "v_name":   f"bert.encoder.layer.{i}.attention.self.value",
+            "out_name": f"bert.encoder.layer.{i}.attention.output.dense",
+            "q":        sa.query,
+            "k":        sa.key,
+            "v":        sa.value,
+            "out":      out_proj,
+            "num_heads": sa.num_attention_heads,
+        })
+    return blocks
+
+
+def discover_llama_attention(model):
+    """
+    Locate separate‐QKV attention blocks in LLaMA models.
+    """
+    from torch import nn
+    from transformers.modeling_utils import Conv1D
+
+    blocks = []
+    core = getattr(model, "model", model)
+
+    for i, layer in enumerate(core.layers):
+        sa = layer.self_attn
+
+        if hasattr(sa, "num_attention_heads"):
+            num_heads = sa.num_attention_heads
+        elif hasattr(sa, "num_heads"):
+            num_heads = sa.num_heads
+        elif hasattr(sa, "config") and hasattr(sa.config, "num_attention_heads"):
+            num_heads = sa.config.num_attention_heads
+        else:
+            raise AttributeError(
+                f"LlamaAttention at layer {i} has no num_attention_heads, "
+                "num_heads, or config.num_attention_heads"
+            )
+
+        blocks.append({
+            "type": "separate",
+            "prefix":   f"model.layers.{i}.self_attn",
+            "q_name":   f"model.layers.{i}.self_attn.q_proj",
+            "k_name":   f"model.layers.{i}.self_attn.k_proj",
+            "v_name":   f"model.layers.{i}.self_attn.v_proj",
+            "out_name": f"model.layers.{i}.self_attn.o_proj",
+            "q":        sa.q_proj,
+            "k":        sa.k_proj,
+            "v":        sa.v_proj,
+            "out":      sa.o_proj,
+            "num_heads": num_heads,
+        })
+    return blocks
+
+ATTENTION_DISCOVERY_REGISTRY = {
+    "GPT2Model": discover_gpt2_attention,
+    "GPT2LMHeadModel": discover_gpt2_attention,
+    "BertModel": discover_bert_attention,
+    "BertForMaskedLM": discover_bert_attention,
+    "LlamaModel": discover_llama_attention,
+    "LlamaForCausalLM": discover_llama_attention,
+}
