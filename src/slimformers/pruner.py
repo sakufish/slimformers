@@ -3,7 +3,7 @@ from torch import nn
 from transformers.modeling_utils import Conv1D
 from rich.console import Console
 from rich.panel import Panel
-from .discovery import DISCOVERY_REGISTRY, default_discover
+from .discovery import DISCOVERY_REGISTRY, default_discover, ATTENTION_DISCOVERY_REGISTRY
 import psutil
 import os
 
@@ -37,7 +37,6 @@ class Pruner:
                 border_style="cyan"
             )
         )
-        self._has_pruned = False
 
     @staticmethod
     def _discover_mlp_blocks(model: nn.Module):
@@ -51,18 +50,26 @@ class Pruner:
 
     def _compute_topk_neurons(self, activations: torch.Tensor, sparsity: float):
         """
-        Select the top neurons by average activation magnitude.
-        This is the default pruning strategy.
+        Select the top neurons (or heads) by activation magnitude.
+        Supports:
+        - 3D tensor: (batch, seq_len, features) → mean over (0,1)
+        - 2D tensor: (batch, features)         → mean over 0
+        - 1D tensor: (features,)               → use abs directly
         """
         if activations.dim() == 3:
-            mags = activations.abs().mean(dim=(0,1))
+            mags = activations.abs().mean(dim=(0, 1))
         elif activations.dim() == 2:
             mags = activations.abs().mean(dim=0)
+        elif activations.dim() == 1:
+            mags = activations.abs()
         else:
             raise ValueError(f"Bad activation shape {activations.shape}")
-        total = mags.size(0)
+
+        total = mags.numel()
         k = int((1.0 - sparsity) * total)
-        return torch.topk(mags, k=k).indices, total
+        keep = torch.topk(mags, k=k).indices
+        return keep, total
+
 
     def _hook_activations(self, layer_name: str):
         """
@@ -150,9 +157,6 @@ class Pruner:
             sparsity (float): Fraction of neurons to prune (0.0 keeps all, 1.0 prunes all)
             max_batches (int): Max number of batches to use for computing average activations
         """
-        if self._has_pruned:
-            console.print("[yellow]Pruner has already run once — skipping second pass[/yellow]")
-            return
         
         self.model.eval()
         device = next(self.model.parameters()).device
@@ -212,7 +216,6 @@ class Pruner:
                 console.print(f"  [green]Pruned FFN[/green]: {orig} → {keep_idx.numel()} units")
 
         console.rule("[bold green]Pruning Complete")    
-        self._has_pruned = True
 
     def report(self):
         """
@@ -257,3 +260,117 @@ class Pruner:
                 border_style="magenta"
             )
         )
+
+    def prune_attention_heads(self, dataloader, sparsity=0.3, max_batches=10):
+        """
+        Prune attention heads using average query (or packed QKV) activations.
+        So far, it supports GPT‑2 (packed) and BERT/LLaMA (separate).
+        """
+        self.model.eval()
+        device = next(self.model.parameters()).device
+        console.rule(f"[bold]Starting Attention Pruning at {sparsity:.0%} Sparsity")
+
+        blocks = ATTENTION_DISCOVERY_REGISTRY.get(type(self.model).__name__, lambda m: [])(self.model)
+        console.print(f"[bold]Discovered {len(blocks)} attention blocks[/bold]\n")
+
+        for blk in blocks:
+            prefix = blk["prefix"]
+            key = blk.get("qkv_name") or blk["q_name"]
+            handle = self._hook_activations(key)
+            total_acts, n = None, 0
+            for batch in dataloader:
+                if n >= max_batches:
+                    break
+                with torch.no_grad():
+                    _ = self.model(**{k: v.to(device) for k, v in batch.items()})
+                act = self.activations.pop(key, None)
+                if act is not None:
+                    total_acts = act if total_acts is None else total_acts + act
+                    n += 1
+            handle.remove()
+            if n == 0:
+                raise RuntimeError(f"No activations for attention block {prefix}")
+
+            avg_act = (total_acts / n).abs()    
+            B, T, D = avg_act.shape
+            H = blk["num_heads"]
+            head_dim_qkv = D // H
+
+            head_mags = avg_act.view(B, T, H, head_dim_qkv).mean(dim=(0, 1, 3))
+            keep, orig = self.pruning_strategy(head_mags, sparsity)
+
+            idx_qkv = torch.cat([
+                torch.arange(h * head_dim_qkv, (h + 1) * head_dim_qkv, device=keep.device)
+                for h in keep
+            ])
+
+            out_layer = blk["out"]
+            if isinstance(out_layer, Conv1D):
+                in_dim = out_layer.weight.size(0)
+            else:
+                in_dim = out_layer.in_features
+            head_dim_out = in_dim // H
+            idx_out = torch.cat([
+                torch.arange(h * head_dim_out, (h + 1) * head_dim_out, device=keep.device)
+                for h in keep
+            ])
+
+            if blk["type"] == "packed":
+                new_qkv = self._rebuild(blk["qkv"], keep_out=idx_qkv)
+                self._replace_module(blk["qkv_name"], new_qkv)
+            else:
+                for name in ("q", "k", "v"):
+                    new_lin = self._rebuild(blk[name], keep_out=idx_qkv)
+                    self._replace_module(blk[f"{name}_name"], new_lin)
+
+            new_out = self._rebuild(blk["out"], keep_in=idx_out)
+            self._replace_module(blk["out_name"], new_out)
+            self._patch_attention_module(prefix, keep.numel(), head_dim_out)
+
+            console.print(f"[green]Pruned {prefix}[/green]: {orig} → {keep.numel()} heads")
+
+        console.rule("[bold green]Attention Pruning Complete")
+
+    def _patch_attention_module(self, prefix: str, new_heads: int, head_dim_out: int):
+        """
+        Dynamically update any head-count or size attributes on the attn module.
+        """
+        mod = dict(self.model.named_modules())[prefix]
+
+        if hasattr(mod, "num_heads"):
+            mod.num_heads = new_heads
+        if hasattr(mod, "num_attention_heads"):
+            mod.num_attention_heads = new_heads
+
+        if hasattr(mod, "embed_dim") and hasattr(mod, "split_size"):
+            new_embed = head_dim_out * new_heads
+            mod.embed_dim   = new_embed
+            mod.split_size  = new_embed
+
+        if hasattr(mod, "attention_head_size") and hasattr(mod, "all_head_size"):
+            mod.all_head_size = mod.attention_head_size * new_heads
+
+
+    def _collect_activations(self, blk, dataloader, max_batches):
+        """
+        Runs up to max_batches through the model, hooks either Q or packed QKV,
+        and returns the avg activation tensor (B, T, D).
+        """
+        key = blk.get("qkv_name") or blk["q_name"]
+        handle = self._hook_activations(key)
+        total, n = None, 0
+        device = next(self.model.parameters()).device
+
+        for batch in dataloader:
+            if n >= max_batches: break
+            with torch.no_grad():
+                _ = self.model(**{k: v.to(device) for k, v in batch.items()})
+            act = self.activations.pop(key, None)
+            if act is not None:
+                total = act if total is None else total + act
+                n += 1
+
+        handle.remove()
+        if n == 0:
+            raise RuntimeError(f"No activations for {blk['prefix']}")
+        return total / n
