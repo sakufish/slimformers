@@ -1,10 +1,11 @@
 # Slimformers
 
-Slimformers is a lightweight Python framework for pruning and fine-tuning transformer models. It supports activation-based MLP (FFN) pruning and low-rank adaptation (LoRA) without the need for any manual layer specification.
+Slimformers is a lightweight Python framework for pruning and fine-tuning transformer models. It supports activation-based MLP (FFN) pruning, attention head pruning, low-rank adaptation (LoRA) without needing any manual layer specification.
 
 # Features
 
 - Prunes neurons based on average activations across multiple batches
+- Prunes attention heads based on mean query activations
 - Automatic FFN and gated FFN block discovery for common architectures (GPT-2, BERT, LLaMA)
 - Safely rebuilds pruned `nn.Linear` and `Conv1D` layers
 - LoRA fine-tuning with auto-inferred target modules
@@ -36,6 +37,16 @@ pruner.prune_all_mlp_layers(
     max_batches=10
 )
 ```
+## Prune Attention Heads
+``` python
+# Prune 40% of attention heads based on query activations
+pruner.prune_attention_heads(
+    dataloader=dataloader,
+    sparsity=0.4,
+    max_batches=10
+)
+```
+
 ## LoRA Fine-tuning
 ``` python
 from slimformers import lora_finetune
@@ -84,3 +95,17 @@ Pruning was run on ```deepseek-ai/deepseek-coder-1.3b-base``` with 40% sparsity 
 - Pruned Parameters: ```1,024,855,424```
 - Total Reduction: ```321,616,512 (23.89%)```
 - CPU Memory: ```(Before --> After): 5398.57 MB --> 4253.34 MB (–1145.23 MB)```
+
+# Limitations
+
+Slimformers is made to be lightweight and architecture agnostic, but there are current limitations:
+
+- **Limited model support (for now)**  
+  Currently, attention head and FFN pruning supports GPT‑2, BERT, and LLaMA type models. Encoder-decoder architectures like T5 or BART (with cross-attention), and other variants like Falcon or BLOOM, are not supported yet. Also, FFN pruning assumes standard `nn.Linear` or `Conv1D` layers. If your model uses custom MLP designs like SwiGLU, Gated FFNs, or fused blocks, you'll need to add custom discovery logic.
+
+  That said, **support for more models will be added over time**. The framework is modular, and the discovery system is easy to extend. Feel free to contribute or fork it to add support for other architectures. I will continue to expand the library's coverage.
+
+- **Won’t work with exotic attention layouts**  
+  If your model uses grouped heads, custom fused QKV projections, or MoE-style head routing, the default slicing logic might fail. This is rare for most Hugging Face models, but possible.
+
+- **Not optimized for speed (Yet!)** 
