@@ -77,7 +77,7 @@ class Pruner:
         """
         module = dict(self.model.named_modules())[layer_name]
         return module.register_forward_hook(
-            lambda mod, inp, out, key=layer_name: self.activations.setdefault(key, out.detach().cpu())
+            lambda mod, inp, out, key=layer_name: self.activations.setdefault(key, out.detach())
         )
 
     def _rebuild_linear(self, layer: nn.Linear, keep_out: torch.Tensor = None, keep_in:  torch.Tensor = None):
