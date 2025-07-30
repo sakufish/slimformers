@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "slimformers"
-version = "1.4.1"
+version = "1.4.2"
 description = "Lightweight Optimization and Model Adaptation"
 authors = [
   { name="Caden Chen", email="cadenc.woss@gmail.com" }
