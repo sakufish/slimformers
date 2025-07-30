@@ -28,5 +28,8 @@ keywords = [
   "model efficiency"
 ]
 
+[project.urls]
+Homepage = "https://slimformers.vercel.app/"
+
 [tool.setuptools.packages.find]
 where = ["src"]
