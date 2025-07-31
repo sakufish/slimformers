@@ -25,7 +25,8 @@ keywords = [
   "LLM",
   "pruning",
   "LoRA",
-  "model efficiency"
+  "model optimization",
+  "compression",
 ]
 
 [project.urls]
