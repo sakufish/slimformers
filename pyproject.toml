@@ -31,6 +31,7 @@ keywords = [
 
 [project.urls]
 Homepage = "https://slimformers.vercel.app/"
+Source = "https://github.com/sakufish/slimformers/"
 
 [tool.setuptools.packages.find]
 where = ["src"]
